@@ -1,0 +1,314 @@
+import pandas as pd
+df=pd.read_csv("/content/Clean_Dataset.csv")
+df.head()
+
+"""# Importing needed modules"""
+
+# Commented out IPython magic to ensure Python compatibility.
+import matplotlib.pyplot as plt
+# %matplotlib inline
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Lasso
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.model_selection import ShuffleSplit
+from sklearn.model_selection import GridSearchCV
+import seaborn as sns
+
+df.info()
+
+"""we can clearly see that the data is clean enough and dosent have any null values across the columns thus data doesn't need much of cleaning,so we can remove un wanted datas from the data framee
+
+# Outlier Removal
+"""
+
+#removing outliers
+df1=df.drop(["Unnamed: 0","flight","departure_time","arrival_time","stops"],axis=1)
+df2=df1.copy()
+#feature engineering destination and source in on column
+df2["source_and_destination"] = df2[["source_city", "destination_city"]].apply(lambda x: "-".join(x), axis=1)
+df2.drop(["source_city","destination_city"],axis=1,inplace=True)
+#source and destination is made it into a single column
+
+df2.head()
+
+#seperating dataframes as business and economy for better analysis
+df_economy=df2[df2["class"]=="Economy"]
+df_business=df2[df2["class"]=="Business"]
+dftemp=df1.reset_index() #temporary dataframe used for counts
+#df_economy.head()
+#df_business.head()
+
+"""**Economy class**"""
+
+sns.displot(data=df_economy,x='price',y='source_and_destination')
+
+sns.displot(data=df_economy,x='days_left',y='price')
+
+"""by analysing this displot we can clearly see that some prices are highly qouted than normal may be its because of less daysa_left check for that"""
+
+df_economy=df_economy[df_economy['price']<30000]
+df_to_remove_economy=df_economy[df_economy['price']>25000][df_economy['days_left']>3]
+df_to_remove_economy
+
+"""**Business class**"""
+
+sns.catplot(data=df_business, x='price', y='source_and_destination', kind='bar')
+
+sns.catplot(data=df_business,x='days_left',y='price')
+
+"""in the above plot their are prices above 1 lakh, lets check the credibility of data
+
+by analysing the above displot their is small no of prices above 1 lakh even if tickets were booked prior to a month so we can remove the 100000 price except for days_left=1
+"""
+
+df_to_remove_business=df_business[df_business['price']>100000][df_business['days_left']>1]
+df_to_remove_business
+
+merged=pd.merge(df2,df_to_remove_economy,on=['airline','class','duration','days_left','price','source_and_destination'],how='left', indicator=True)
+df2 = merged[merged['_merge'] == 'left_only'].drop('_merge', axis=1)
+df2
+
+merged_b=pd.merge(df2,df_to_remove_business,on=['airline','class','duration','days_left','price','source_and_destination'],how='left', indicator=True)
+df2 = merged_b[merged_b['_merge'] == 'left_only'].drop('_merge', axis=1)
+df2
+
+"""# Machine Learning Prediction Model"""
+
+#Machine learning prediction model Generation
+#by analysing the data based on the duration we can observe that it didn't clearly influenced in the price in a stable way so we can remove it
+df3=df2.drop('duration',axis=1)
+
+#converting the categorical variables into numeric variables
+
+label_encoder=LabelEncoder()
+
+#converting categorical values of airline
+df3['airline']=label_encoder.fit_transform(df2['airline'])
+#label maping the transformed data
+label_map_airline= dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
+
+#converting categorical values of class
+df3['class']=label_encoder.fit_transform(df2['class'])
+label_map_class= dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
+
+#converting categorical values of sorce and destination
+df3['source_and_destination']=label_encoder.fit_transform(df2['source_and_destination'])
+label_map_sd= dict(zip(label_encoder.classes_, label_encoder.transform(label_encoder.classes_)))
+
+x=df3.drop('price',axis=1)
+y=df3.price
+#x
+#y
+
+x_train,x_test,y_train,y_test=train_test_split(x,y,test_size=0.1,random_state=10)
+
+"""**Finding best model for prediction**"""
+
+def best_model(x,y):
+    algorithms = {
+        'linear_regression' : {
+            'model':LinearRegression(),
+            'parameters': {
+                'normalize': [True, False]
+            }
+        },
+        'lasso': {
+            'model':Lasso(),
+            'parameters': {
+                'alpha': [1,2],
+                'selection': ['random', 'cyclic']
+            }
+        },
+        'decision_tree': {
+            'model': DecisionTreeRegressor(),
+            'parameters': {
+                'criterion' : ['mse','friedman_mse'],
+                'splitter': ['best','random']
+            }
+        }
+    }
+    scores = []
+    cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=0)
+    for algo_name, config in algorithms.items():
+        gs =  GridSearchCV(config['model'], config['parameters'], cv=cv, return_train_score=False)
+        gs.fit(x,y)
+        scores.append({
+            'model': algo_name,
+            'best_score': gs.best_score_,
+            'best_parameters': gs.best_params_
+        })
+
+    return pd.DataFrame(scores,columns=['model','best_score','best_parameters'])
+#by analysing the model using different algorithms i concluded that decision tree could be the best choice
+#linear_regression-89.1371%
+#lasso-89.1372%
+#decision_tree-91.8248%
+#their for decision tree is selected for modelling
+
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import GridSearchCV
+
+def best_model(x, y):
+    model = LinearRegression()
+    params = {'fit_intercept': [True, False], 'normalize': [True, False]}
+    grid = GridSearchCV(model, params, cv=5)
+    grid.fit(x, y)
+    return grid.best_estimator_
+
+model=DecisionTreeRegressor(criterion='friedman_mse',splitter='best')
+model.fit(x_train,y_train)
+
+model.score(x_test,y_test)
+#accuracy=91.765
+#last itration accuracy=92.05
+
+"""* **Accuracy obtained from modelling is-92.05%**
+
+**Their is a need for this data to be acessible by others def a function so that others can use it**
+"""
+
+def predict_price(airline, Class, days_left, routes):
+    try:
+        a = label_map_airline[airline]
+        c = label_map_class[Class]
+        r = label_map_sd[routes]
+    except KeyError:
+        print("Error: Invalid input for airline, class, or route.")
+        return None
+
+    return model.predict([[a, c, days_left, r]])
+
+airline = input("Enter the airline (e.g. SpiceJet/AirAsia/Vistara/GO_FIRST/Indigo/Air_India): ")
+Class = input("Enter the class (e.g. Economy/Business): ")
+days_left = int(input("Enter the number of days left: "))
+routes = input("Enter the source and destination (e.g. Delhi-Mumbai): ")
+
+predicted_price = predict_price(airline, Class, days_left, routes)
+if predicted_price:
+    print("Predicted price:", predicted_price)
+
+"""remove the # so that the function can take input and work
+
+# Flight Data Analysis
+
+# Analysis by Travel Locations per Airline (Business Class)
+"""
+
+#business class
+analysis_businessclass = df_business.groupby("airline")
+print("Business Class")
+print("\n")
+for airline, dfx in analysis_businessclass:
+    sd = [source_and_destination for source_and_destination, df in dfx.groupby('source_and_destination')]
+    print(airline)
+    price_per_sd = dfx.groupby("source_and_destination").mean()['price']
+    plt.figure(figsize=(10,4))     
+    plt.bar(sd, price_per_sd,color='#e01c02')
+    plt.xticks(sd, rotation="vertical")
+    plt.grid()
+    plt.xlabel("source_and_destination")
+    plt.ylabel('price')
+    plt.show()
+
+"""# Analysis by Travel Locations per Airline (Economy Class)"""
+
+#economy class
+analysis_economyclass = df_economy.groupby("airline")
+print("Economy Class")
+print("\n")
+for airline, dfx in analysis_economyclass:
+    sd = [source_and_destination for source_and_destination, df in dfx.groupby('source_and_destination')]
+    print(airline)
+    price_per_sd = dfx.groupby("source_and_destination").mean()['price']
+    plt.figure(figsize=(10,4))     
+    plt.bar(sd, price_per_sd,color='#1f9c19')
+    plt.xticks(sd, rotation="vertical")
+    plt.grid()
+    plt.xlabel("source_and_destination")
+    plt.ylabel('price')
+    plt.show()
+
+"""# Analysing the busiest destination"""
+
+destination_analysis=dftemp.groupby("destination_city").count()['index']
+destinations=[destination_city for destination_city,df in df1.groupby("destination_city") ]
+plt.figure(figsize=(10,4))     
+plt.bar(destinations, destination_analysis,color='#f56d05')
+plt.xticks(destinations, rotation="vertical")
+plt.grid()
+plt.title("analysis of busiest destinations")
+plt.xlabel("Destinations")
+plt.ylabel('Count')
+plt.show()
+
+"""# Analysing the busiest source cities"""
+
+source_analysis=dftemp.groupby("source_city").count()['index']
+sources=[source_city for source_city,df in df1.groupby("source_city") ]
+plt.figure(figsize=(10,4))     
+plt.bar(sources, source_analysis,color='#0b11d4')
+plt.xticks(sources, rotation="vertical")
+plt.grid()
+plt.title("analysis of busiest sources")
+plt.xlabel("sources")
+plt.ylabel('Count')
+plt.show()
+
+"""# Analysing the busiest routes"""
+
+dftemp2=df2.reset_index()
+routes_analysis=dftemp2.groupby("source_and_destination").count()['index']
+routes=[source_and_destination for source_and_destination,df in dftemp2.groupby("source_and_destination") ]
+plt.figure(figsize=(10,4))     
+plt.bar(routes, routes_analysis,color="#5d0885")
+plt.xticks(routes, rotation="vertical")
+plt.grid()
+plt.title("analysis of busiest routes")
+plt.xlabel("source_and_destination")
+plt.ylabel('Count')
+plt.show()
+
+"""# Analysing the shares of airlines in total domestic air travel"""
+
+airlines = [airline for airline, df in df2.groupby('airline')]
+shares=dftemp2.groupby("airline").count()['index']
+plt.axis('equal')
+plt.pie(shares,labels=airlines,shadow=True, autopct='%0.2f%%',radius=1,startangle=90,explode=[0,0,0,0,1,0])
+plt.legend(loc='best')
+plt.show()
+
+"""# Analysing the effect of day left on price"""
+
+#economy class
+day_analysis=df_economy.groupby("days_left").mean()['price']
+day=[days_left for days_left,df in df_economy.groupby("days_left") ]
+plt.figure(figsize=(10,4))     
+plt.plot(day, day_analysis,color='#f70707')
+plt.title("analysing the effect of day left on price on economy class")
+plt.xlabel("days left")
+plt.ylabel('price')
+plt.show()
+
+#business class
+day_analysis_b=df_business.groupby("days_left").mean()['price']
+day_b=[days_left for days_left,df in df_business.groupby("days_left") ]
+plt.figure(figsize=(10,4))     
+plt.plot(day_b, day_analysis_b,color='#f70707')
+plt.title("analysing the effect of day left on price on business class")
+plt.xlabel("days left")
+plt.ylabel('price')
+plt.show()
+
+"""# Analysing the density of travellers in each class"""
+
+dftemp3=dftemp.copy()
+dftemp3["Class"]=dftemp3['class']
+dftemp3.drop('class',axis=1,inplace=True)
+travelclass=[Class for Class,df in dftemp3.groupby("Class")]
+density=dftemp3.groupby('Class').count()['index']
+plt.axis('equal')
+plt.pie(density,labels=travelclass,shadow=True,autopct="%0.2f%%",radius=1,startangle=180,explode=[0.2,0])
+plt.legend(loc='best')
